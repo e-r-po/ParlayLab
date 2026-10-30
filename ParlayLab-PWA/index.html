@@ -1,1 +1,86 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07111e"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ParlayLab"><link rel="apple-touch-icon" href="/icons/icon-192.png"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/styles.css"><title>ParlayLab</title></head><body><div class="shell"><header><div class="logo">◈</div><div><h1>Parlay<span>Lab</span></h1><small>SPORTS ODDS INTELLIGENCE</small></div><span class="status" id="mode">LIVE API</span></header><nav aria-label="App tabs"><button class="tab active" data-tab="explore">Explore</button><button class="tab" data-tab="builder">My Parlay <span id="count">0</span></button><button class="tab" data-tab="analyze">Analyze</button><button class="tab" data-tab="settings">Guide</button></nav><main><section id="explore" class="page active"><div class="hero"><div class="eyebrow">ODDS EXPLORER</div><h2>Find your edge.<br><em>Know the numbers.</em></h2><p>Compare bookmaker prices and build transparent parlays.</p></div><div class="panel"><label>League<select id="sport"><option value="americanfootball_nfl">NFL</option><option value="basketball_nba">NBA</option><option value="baseball_mlb">MLB</option><option value="icehockey_nhl">NHL</option><option value="americanfootball_ncaaf">College football</option><option value="basketball_ncaab">College basketball</option></select></label><label>Sportsbook<select id="book"><option value="draftkings">DraftKings</option><option value="fanduel">FanDuel</option><option value="betmgm">BetMGM</option><option value="all">All three</option></select></label><button class="primary" id="load">Load live game odds</button><p class="muted tiny">Requires deployed API with a configured provider key. Data may be delayed; markets vary by sport and subscription.</p></div><div class="sectionTitle"><h3>Upcoming events</h3><span id="eventStatus">Not loaded</span></div><div id="events" class="stack"><div class="empty">Select a league and load current odds.</div></div></section><section id="builder" class="page"><h2>Parlay builder</h2><p class="muted">Select outcomes from different games. Correlated same-game legs are excluded from automatic combinations.</p><div id="slip" class="stack"></div><div class="panel"><div class="split"><label>Stake ($)<input id="stake" type="number" min="0" step="1" value="10"></label><label>Minimum odds<select id="minimum"><option value="1000">+1000</option><option value="2000">+2000</option><option value="500">+500</option><option value="0">Any</option></select></label></div><div id="summary" class="stats"></div><button id="generate" class="primary">Find combinations from loaded odds</button></div><div class="sectionTitle"><h3>Generated combinations</h3></div><div id="combos" class="stack"><div class="empty">Load games in Explore to find combinations.</div></div></section><section id="analyze" class="page"><h2>Player TD scenario model</h2><p class="muted">Estimate an anytime-TD probability using your own observed usage and scoring assumptions. This is a simplified Poisson model, not a calibrated prediction.</p><div class="panel"><label>Scoring opportunities per game<input id="opp" type="number" value="3.5" min="0" step="0.1"></label><label>TD rate per opportunity (0 to 1)<input id="rate" type="number" value="0.15" min="0" max="1" step="0.01"></label><label>Team scoring adjustment (1 = average)<input id="team" type="number" value="1" min="0" step="0.05"></label><label>Offered American odds<input id="offered" type="number" value="180" step="10"></label><button class="primary" id="estimate">Calculate scenario</button><div id="modelOutput" class="stats"></div></div><div class="notice">Usage inputs are not fetched automatically. Player statistics, opponent defense and injury context must be verified separately before relying on a model. Market implied probability includes bookmaker margin.</div></section><section id="settings" class="page"><h2>Setup & limitations</h2><div class="panel"><h3>Live data connection</h3><p>This app uses a server-side proxy to The Odds API. The API key is kept in a hosting environment variable, never stored in the browser.</p><p><strong>1.</strong> Deploy to Vercel. <strong>2.</strong> Add <code>ODDS_API_KEY</code>. <strong>3.</strong> Open the HTTPS URL on your iPhone. <strong>4.</strong> Tap Share → Add to Home Screen.</p><p>On Windows, open the same URL in Edge or Chrome and select Install app.</p></div><div class="panel"><h3>Market coverage</h3><p>Game moneylines, spreads and totals are loaded through the league odds endpoint. Tap an event to request available player props. Player prop coverage depends on sport, bookmaker and API plan.</p><p>Displayed probabilities are market-implied, not independent predictions. The app does not place bets or access your sportsbook account.</p></div><div class="notice">For informational use only. Betting carries financial risk. Legal age and location restrictions apply. Never interpret an implied probability as a guaranteed outcome.</div></section></main><footer>PARLAYLAB · ANALYTICS, NOT GUARANTEES</footer></div><script type="module" src="/app.js"></script></body></html>
+
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ParlayLab NFL Scanner</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <h1>ParlayLab · NFL Prop Scanner</h1>
+    <p>Live player props, alternate lines, historical hit rates and estimated value</p>
+
+    <section>
+      <label>Sportsbook
+        <select id="book">
+          <option value="draftkings,fanduel,betmgm">All three</option>
+          <option value="draftkings">DraftKings</option>
+          <option value="fanduel">FanDuel</option>
+          <option value="betmgm">BetMGM</option>
+        </select>
+      </label>
+
+      <label>Game
+        <select id="game">
+          <option value="all">All games</option>
+        </select>
+      </label>
+
+      <h3>Markets</h3>
+      <div id="markets"></div>
+
+      <label>
+        <input type="checkbox" id="alts" checked>
+        Alternate lines
+      </label>
+
+      <label>Minimum last-10 hit rate (%)
+        <input id="minhit" type="number" min="0" max="100" value="0">
+      </label>
+
+      <label>Player search
+        <input id="player">
+      </label>
+
+      <label>Sort
+        <select id="sort">
+          <option value="ev">Estimated EV</option>
+          <option value="hit">Historical hit rate</option>
+          <option value="price">Best price</option>
+        </select>
+      </label>
+
+      <button id="scan">Scan NFL games</button>
+    </section>
+
+    <section>
+      <h3>Import verified NFL game logs (JSON)</h3>
+      <input type="file" id="logs" accept=".json">
+      <p id="logstatus">
+        No game logs imported. EV unavailable until data is supplied.
+      </p>
+    </section>
+
+    <h2>Results <small id="status"></small></h2>
+    <div id="results"></div>
+
+    <h2>Parlay slip</h2>
+    <div id="slip"></div>
+
+    <label>Stake $
+      <input id="stake" type="number" value="10">
+    </label>
+
+    <p id="summary"></p>
+
+    <p class="note">
+      Model estimates use a simple historical smoothing heuristic,
+      not a calibrated forecast. Results are for research only;
+      prices and markets may change.
+    </p>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
