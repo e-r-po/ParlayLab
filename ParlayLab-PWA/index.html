@@ -1,17 +1,19 @@
 
 <!doctype html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ParlayLab NFL Scanner</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main>
-    <h1>ParlayLab · NFL Prop Scanner</h1>
-    <p>Live player props, alternate lines, historical hit rates and estimated value</p>
+<main class="shell">
+  <h1>◈ ParlayLab · NFL Scanner</h1>
+  <p>Compact live odds scanner with automatic nflverse historical hit rates and estimated value.</p>
 
-    <section>
+  <section class="panel">
+    <div class="filters">
       <label>Sportsbook
         <select id="book">
           <option value="draftkings,fanduel,betmgm">All three</option>
@@ -20,67 +22,78 @@
           <option value="betmgm">BetMGM</option>
         </select>
       </label>
-
       <label>Game
         <select id="game">
-          <option value="all">All games</option>
+          <option value="all">All upcoming games</option>
         </select>
       </label>
-
-      <h3>Markets</h3>
-      <div id="markets"></div>
-
-      <label>
-        <input type="checkbox" id="alts" checked>
-        Alternate lines
+      <label>Player search
+        <input id="player" placeholder="Player name">
       </label>
-
-      <label>Minimum last-10 hit rate (%)
+      <label>Minimum L10 hit %
         <input id="minhit" type="number" min="0" max="100" value="0">
       </label>
+    </div>
 
-      <label>Player search
-        <input id="player">
-      </label>
+    <h2>Markets</h2>
+    <div id="markets" class="checks"></div>
 
-      <label>Sort
-        <select id="sort">
-          <option value="ev">Estimated EV</option>
-          <option value="hit">Historical hit rate</option>
-          <option value="price">Best price</option>
-        </select>
-      </label>
-
-      <button id="scan">Scan NFL games</button>
-    </section>
-
-    <section>
-      <h3>Import verified NFL game logs (JSON)</h3>
-      <input type="file" id="logs" accept=".json">
-      <p id="logstatus">
-        No game logs imported. EV unavailable until data is supplied.
-      </p>
-    </section>
-
-    <h2>Results <small id="status"></small></h2>
-    <div id="results"></div>
-
-    <h2>Parlay slip</h2>
-    <div id="slip"></div>
-
-    <label>Stake $
-      <input id="stake" type="number" value="10">
+    <label>
+      <input type="checkbox" id="alts" checked>
+      Include alternate lines
     </label>
 
-    <p id="summary"></p>
+    <button class="primary" id="scan">Scan NFL games</button>
+    <p id="status" class="stat">Ready to scan.</p>
+    <p id="statsStatus" class="stat">Historical statistics not loaded.</p>
 
-    <p class="note">
-      Model estimates use a simple historical smoothing heuristic,
-      not a calibrated forecast. Results are for research only;
-      prices and markets may change.
+    <label>Verified injury report JSON (optional)
+      <input type="file" id="injuries" accept=".json,application/json">
+    </label>
+    <p id="injuryStatus" class="stat">
+      No verified injury report loaded. Injury adjustments disabled.
     </p>
-  </main>
+  </section>
 
-  <script type="module" src="/app.js"></script>
+  <section>
+    <div class="pager">
+      <strong id="total">Results</strong>
+      <label>Rows per page
+        <select id="pageSize">
+          <option>50</option>
+          <option>100</option>
+        </select>
+      </label>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr id="headers"></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button id="prev">Previous</button>
+      <span id="pageInfo"></span>
+      <button id="next">Next</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Parlay slip <span id="count">0</span></h2>
+    <div id="slip"></div>
+    <label>Stake ($)
+      <input type="number" id="stake" value="10" min="0">
+    </label>
+    <p id="summary"></p>
+  </section>
+
+  <p class="note">
+    EV uses an uncalibrated historical-frequency heuristic,
+    not a validated prediction. Missing or ambiguous player
+    data shows N/A. Parlay returns do not account for
+    correlation or sportsbook repricing. Research only.
+  </p>
+</main>
+<script type="module" src="/app.js"></script>
 </body>
 </html>
