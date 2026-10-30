@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -10,7 +9,7 @@
 <body>
 <main class="shell">
   <h1>◈ ParlayLab · NFL Scanner</h1>
-  <p>Compact live odds scanner with automatic nflverse historical hit rates and estimated value.</p>
+  <p>Daily odds snapshot scanner with automatic nflverse historical hit rates and estimated value.</p>
 
   <section class="panel">
     <div class="filters">
@@ -22,14 +21,17 @@
           <option value="betmgm">BetMGM</option>
         </select>
       </label>
+
       <label>Game
         <select id="game">
           <option value="all">All upcoming games</option>
         </select>
       </label>
+
       <label>Player search
         <input id="player" placeholder="Player name">
       </label>
+
       <label>Minimum L10 hit %
         <input id="minhit" type="number" min="0" max="100" value="0">
       </label>
@@ -39,13 +41,38 @@
     <div id="markets" class="checks"></div>
 
     <label>
-      <input type="checkbox" id="alts" checked>
+      <input type="checkbox" id="alts">
       Include alternate lines
     </label>
 
-    <button class="primary" id="scan">Scan NFL games</button>
-    <p id="status" class="stat">Ready to scan.</p>
-    <p id="statsStatus" class="stat">Historical statistics not loaded.</p>
+    <p>
+      Load the game list, choose a game (or all games), then fetch
+      once per 24 hours. Odds are snapshots, not live quotes.
+    </p>
+
+    <button id="loadGames">Load upcoming games</button>
+    <button class="primary" id="scan">Fetch odds / use daily snapshot</button>
+    <button id="override">Override 24-hour limit</button>
+
+    <p id="snapshotStatus" class="stat"></p>
+    <p id="usageStatus" class="stat"></p>
+
+    <button id="exportJSON">Export snapshot JSON</button>
+    <button id="exportCSV">Export odds CSV</button>
+
+    <label>Import saved JSON or odds CSV
+      <input
+        type="file"
+        id="importOdds"
+        accept=".json,.csv,application/json,text/csv">
+    </label>
+
+    <p id="status" class="stat">
+      Load games or import saved odds to begin.
+    </p>
+    <p id="statsStatus" class="stat">
+      Historical statistics not loaded.
+    </p>
 
     <label>Verified injury report JSON (optional)
       <input type="file" id="injuries" accept=".json,application/json">
@@ -65,12 +92,14 @@
         </select>
       </label>
     </div>
+
     <div class="tablewrap">
       <table>
         <thead><tr id="headers"></tr></thead>
         <tbody id="results"></tbody>
       </table>
     </div>
+
     <div class="pager">
       <button id="prev">Previous</button>
       <span id="pageInfo"></span>
