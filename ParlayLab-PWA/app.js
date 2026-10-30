@@ -16,7 +16,9 @@ const markets={
 const state={
   bets:[],logs:[],slip:[],
   sort:'player',direction:1,page:0,
-  statsError:'',injuries:[]
+  statsError:'',injuries:[],
+  analytics:null,historyCache:new Map(),contextCache:new Map(),
+  playerLogs:new Map(),eligibleLogs:new Map(),injuryByPlayer:new Map()
 };
 
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({
@@ -76,9 +78,57 @@ function numeric(row,key){
   return row[key]==null||row[key]===''?NaN:Number(row[key]);
 }
 
+// Rebuild indexes only when historical data or injury data changes.
+function rebuildIndexes(){
+  state.playerLogs=new Map();
+  state.eligibleLogs=new Map();
+  state.injuryByPlayer=new Map();
+  for(const injury of state.injuries){
+    const name=norm(injury.player);
+    if(!state.injuryByPlayer.has(name))state.injuryByPlayer.set(name,injury);
+  }
+  for(const row of state.logs){
+    const name=norm(row.player_display_name);
+    if(!state.playerLogs.has(name))state.playerLogs.set(name,[]);
+    state.playerLogs.get(name).push(row);
+    if(String(row.season_type)==='REG'&&Number(row.season)===2026){
+      for(const [,key] of Object.values(markets)){
+        if(row[key]==null)continue;
+        if(!state.eligibleLogs.has(key))state.eligibleLogs.set(key,[]);
+        state.eligibleLogs.get(key).push(row);
+      }
+    }
+  }
+  invalidateAnalytics();
+}
+function invalidateAnalytics(){
+  state.analytics=null;
+  state.historyCache.clear();
+  state.contextCache.clear();
+}
+function calculatedRows(){
+  if(state.analytics!==null)return state.analytics;
+  state.analytics=state.bets.map(b=>{
+    // Sportsbooks and alternate market labels can share identical calculations.
+    const historyKey=JSON.stringify([norm(b.player),b.base,b.side,b.line]);
+    if(!state.historyCache.has(historyKey))
+      state.historyCache.set(historyKey,history(b));
+    const h=state.historyCache.get(historyKey);
+    const contextKey=JSON.stringify([historyKey,b.home,b.away]);
+    if(!state.contextCache.has(contextKey))
+      state.contextCache.set(contextKey,context(b,h));
+    const c=state.contextCache.get(contextKey);
+    return {...b,h,...c,
+      ev:Number.isFinite(c.prob)?c.prob*decimal(b.price)-1:NaN,
+      l5:h?.l5??NaN,l10:h?.l10??NaN,season:h?.season??NaN
+    };
+  });
+  return state.analytics;
+}
+
 function history(b){
   const key=markets[b.base][1],name=norm(b.player);
-  const matches=state.logs.filter(r=>norm(r.player_display_name)===name);
+  const matches=(state.playerLogs.get(name)||[]);
   if(new Set(matches.map(r=>r.player_id).filter(Boolean)).size>1)return null;
   const rows=matches
     .filter(r=>String(r.season_type)==='REG'&&Number(r.season)===2026)
@@ -126,7 +176,7 @@ function parse(e){
 }
 
 function context(b,h){
-  const injury=state.injuries.find(x=>norm(x.player)===norm(b.player));
+  const injury=state.injuryByPlayer.get(norm(b.player));
   const status=injury?.status||'Unverified';
   if(!h)return {prob:NaN,usage:NaN,defense:NaN,injury:status};
 
@@ -145,10 +195,7 @@ function context(b,h){
   const team=h.rows[h.rows.length-1]?.recent_team;
   const opponent=team===b.home?b.away:team===b.away?b.home:null;
 
-  const eligible=state.logs.filter(r=>
-    String(r.season_type)==='REG'&&
-    Number(r.season)===2026&&r[key]!=null
-  );
+  const eligible=state.eligibleLogs.get(key)||[];
   const allowed=opponent?eligible.filter(r=>r.opponent_team===opponent):[];
   const leagueAvg=avg(eligible,key),defAvg=avg(allowed,key);
   const defense=allowed.length>=20&&leagueAvg>0
@@ -183,13 +230,7 @@ function render(){
   headers();
   const search=$('player').value.trim().toLowerCase();
   const min=Number($('minhit').value)||0;
-  let rows=state.bets.map(b=>{
-    const h=history(b),c=context(b,h);
-    return {...b,h,...c,
-      ev:Number.isFinite(c.prob)?c.prob*decimal(b.price)-1:NaN,
-      l5:h?.l5??NaN,l10:h?.l10??NaN,season:h?.season??NaN
-    };
-  });
+  let rows=calculatedRows();
 
   rows=rows.filter(b=>
     ($('game').value==='all'||b.eventId===$('game').value)&&
@@ -248,6 +289,7 @@ async function loadStats(){
     if(!r.ok)throw Error(j.error||'Stats unavailable');
     if(!Array.isArray(j.data))throw Error('Invalid stats response');
     state.logs=j.data;
+    rebuildIndexes();
     $('statsStatus').textContent=`nflverse ${j.season}: ${state.logs.length.toLocaleString()} player-week records · updated ${new Date(j.updatedAt).toLocaleString()}`;
     render();
   }catch(e){
@@ -260,6 +302,7 @@ $('scan').onclick=async()=>{
   const btn=$('scan');
   btn.disabled=true;
   state.bets=[];
+  invalidateAnalytics();
   try{
     const chosen=[...document.querySelectorAll('#markets input:checked')].map(x=>x.value);
     if(!chosen.length)throw Error('Choose a prop market');
@@ -284,6 +327,7 @@ $('scan').onclick=async()=>{
       }catch(e){errors.push(e.message)}
     }
     state.page=0;
+    invalidateAnalytics();
     render();
     $('status').textContent=`Loaded ${state.bets.length.toLocaleString()} odds rows${errors.length?` · ${errors.length} failed requests: ${errors[0]}`:''}`;
   }catch(e){
@@ -317,9 +361,11 @@ $('injuries').onchange=async e=>{
     ))throw Error('Expected [{player,status,checkedAt,source}]');
 
     state.injuries=data;
+    rebuildIndexes();
     $('injuryStatus').textContent=`Loaded ${data.length} user-supplied injury statuses; check timestamps and sources before relying on them.`;
     render();
   }catch(e){
     $('injuryStatus').textContent=e.message;
   }
 };
+
