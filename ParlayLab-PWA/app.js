@@ -1,4 +1,3 @@
-
 const $=id=>document.getElementById(id);
 
 const markets={
@@ -66,6 +65,7 @@ function keyDirection(key){
 async function api(q){
   const r=await fetch('/api/odds?'+new URLSearchParams(q));
   const j=await r.json();
+  if(j.usage){state.usage=j.usage;showSnapshot();}
   if(!r.ok)throw Error(j.error||'Odds API error');
   return j.data;
 }
@@ -101,15 +101,16 @@ function rebuildIndexes(){
   }
   invalidateAnalytics();
 }
+
 function invalidateAnalytics(){
   state.analytics=null;
   state.historyCache.clear();
   state.contextCache.clear();
 }
+
 function calculatedRows(){
   if(state.analytics!==null)return state.analytics;
   state.analytics=state.bets.map(b=>{
-    // Sportsbooks and alternate market labels can share identical calculations.
     const historyKey=JSON.stringify([norm(b.player),b.base,b.side,b.line]);
     if(!state.historyCache.has(historyKey))
       state.historyCache.set(historyKey,history(b));
@@ -128,7 +129,7 @@ function calculatedRows(){
 
 function history(b){
   const key=markets[b.base][1],name=norm(b.player);
-  const matches=(state.playerLogs.get(name)||[]);
+  const matches=state.playerLogs.get(name)||[];
   if(new Set(matches.map(r=>r.player_id).filter(Boolean)).size>1)return null;
   const rows=matches
     .filter(r=>String(r.season_type)==='REG'&&Number(r.season)===2026)
@@ -220,7 +221,7 @@ function slip(){
   document.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{
     state.slip.splice(Number(b.dataset.remove),1);slip();
   });
-  if(!state.slip.length){$('summary').textContent='';return}
+  if(!state.slip.length){$('summary').textContent='';return;}
   const d=state.slip.reduce((v,b)=>v*decimal(b.price),1);
   const stake=Math.max(0,Number($('stake').value)||0);
   $('summary').textContent=`Indicative decimal odds ${d.toFixed(2)} · Potential return $${(stake*d).toFixed(2)} · Correlated legs not priced`;
@@ -298,54 +299,375 @@ async function loadStats(){
   }
 }
 
-$('scan').onclick=async()=>{
-  const btn=$('scan');
-  btn.disabled=true;
-  state.bets=[];
-  invalidateAnalytics();
-  try{
-    const chosen=[...document.querySelectorAll('#markets input:checked')].map(x=>x.value);
-    if(!chosen.length)throw Error('Choose a prop market');
-    const all=[...chosen,...($('alts').checked?chosen.filter(x=>x!=='player_anytime_td').map(x=>x+'_alternate'):[])];
-    const chunks=[];
-    for(let i=0;i<all.length;i+=10)chunks.push(all.slice(i,i+10));
-    const events=(await api({kind:'events'})).filter(e=>new Date(e.commence_time)>new Date());
+$('scan').onclick=()=>scanOdds(false);
+$('override').onclick=()=>{
+  if(confirm('Fetch fresh odds now? This bypasses the 24-hour limit and uses API credits.'))scanOdds(true);
+};
 
-    $('game').innerHTML='<option value="all">All upcoming games</option>'+
-      events.map(e=>`<option value="${esc(e.id)}">${esc(e.away_team)} @ ${esc(e.home_team)}</option>`).join('');
-
-    const errors=[];
-    for(let i=0;i<events.length;i++){
-      $('status').textContent=`Scanning game ${i+1}/${events.length}`;
-      for(const chunk of chunks)try{
-        state.bets.push(...parse(await api({
-          kind:'props',
-          eventId:events[i].id,
-          markets:chunk.join(','),
-          bookmakers:$('book').value
-        })));
-      }catch(e){errors.push(e.message)}
-    }
+let filterTimer;
+['game','alts','player','minhit','pageSize'].forEach(id=>
+  $(id).addEventListener(['player','minhit'].includes(id)?'input':'change',()=>{
     state.page=0;
+    clearTimeout(filterTimer);
+    if(['player','minhit'].includes(id))filterTimer=setTimeout(render,150);
+    else render();
+  })
+);
+$('prev').onclick=()=>{state.page--;render();};
+$('next').onclick=()=>{state.page++;render();};
+$('stake').oninput=slip;
+
+const DAY=24*60*60*1000;
+const SNAPSHOT_KEY='parlaylab-odds-snapshot-v1';
+const ATTEMPT_KEY='parlaylab-odds-attempt-v1';
+let snapshotAt=0,lastAttempt=0,scanBusy=false,savedEvents=[];
+
+function storageRead(key){
+  try{return JSON.parse(localStorage.getItem(key));}catch{return null;}
+}
+
+function saveSnapshot(){
+  try{
+    const fields=['eventId','home','away','player','base','side','line','price','book','alt','fetchedAt'];
+    const strings=[],dictionary=new Map();
+    const stringFields=new Set(['eventId','home','away','player','base','side','book']);
+    const intern=value=>{
+      if(!dictionary.has(value)){
+        dictionary.set(value,strings.length);
+        strings.push(value);
+      }
+      return dictionary.get(value);
+    };
+    localStorage.setItem(SNAPSHOT_KEY,JSON.stringify({
+      version:1,encoding:'dictionary-v1',savedAt:snapshotAt,strings,fields,
+      bets:state.bets.map(row=>fields.map(key=>stringFields.has(key)?intern(row[key]):row[key])),
+      events:savedEvents,usage:state.usage
+    }));
+    return true;
+  }catch{
+    $('status').textContent+=' · Could not save on this device. Export JSON to retain these odds.';
+    return false;
+  }
+}
+
+function showSnapshot(){
+  const age=snapshotAt?Math.max(0,Date.now()-snapshotAt):0;
+  $('snapshotStatus').textContent=snapshotAt
+    ?'Saved odds: '+new Date(snapshotAt).toLocaleString()+
+      (age>=DAY?' · Older than 24 hours':' · '+Math.floor(age/3600000)+' hours old')
+    :'No saved odds snapshot on this browser and app address.';
+  const u=state.usage;
+  $('usageStatus').textContent=u
+    ?'Provider credits at last response: '+(u.remaining??'unknown')+' remaining · '+(u.used??'unknown')+' used'+
+      (u.last!=null?' · Last request cost '+u.last:'')
+    :'Credit usage unavailable until the provider returns usage headers.';
+}
+
+function setGames(events){
+  const selected=$('game').value;
+  $('game').innerHTML='<option value="all">All upcoming games</option>'+
+    events.map(e=>'<option value="'+esc(e.id)+'">'+esc(e.away_team)+' @ '+esc(e.home_team)+'</option>').join('');
+  if(events.some(e=>e.id===selected))$('game').value=selected;
+}
+
+function restoreSnapshot(){
+  const saved=storageRead(SNAPSHOT_KEY);
+  lastAttempt=Number(storageRead(ATTEMPT_KEY))||0;
+  if(saved?.version===1&&Array.isArray(saved.bets)&&Number.isFinite(saved.savedAt)){
+    if(saved.encoding==='dictionary-v1'){
+      const stringFields=new Set(['eventId','home','away','player','base','side','book']);
+      state.bets=saved.bets.map((values,i)=>{
+        const row=Object.fromEntries(saved.fields.map((key,j)=>[
+          key,stringFields.has(key)?saved.strings[values[j]]:values[j]
+        ]));
+        return {...row,
+          id:[row.eventId,row.book,row.base,row.player,row.side,row.line,i].join('|'),
+          game:row.away+' @ '+row.home,
+          prop:markets[row.base][0]
+        };
+      });
+    }else state.bets=saved.bets;
+    snapshotAt=saved.savedAt;
+    savedEvents=Array.isArray(saved.events)?saved.events:[];
+    state.usage=saved.usage;
+    setGames(savedEvents);
+    invalidateAnalytics();
+    $('status').textContent='Restored '+state.bets.length.toLocaleString()+' saved odds rows. Prices are from the saved snapshot.';
+  }
+  showSnapshot();
+}
+
+async function loadGames(){
+  $('loadGames').disabled=true;
+  try{
+    savedEvents=(await api({kind:'events'}))
+      .filter(e=>new Date(e.commence_time)>new Date());
+    setGames(savedEvents);
+    $('status').textContent='Game list loaded. Choose games and markets before fetching odds.';
+  }catch(e){
+    $('status').textContent=e.message+' · Saved odds remain available.';
+  }finally{
+    $('loadGames').disabled=false;
+  }
+}
+
+async function scanOdds(override){
+  if(scanBusy)return;
+  if(!override&&Date.now()-Math.max(lastAttempt,snapshotAt)<DAY){
+    $('status').textContent='Using saved odds. Next ordinary refresh: '+
+      new Date(Math.max(lastAttempt,snapshotAt)+DAY).toLocaleString()+
+      '. Override is available if fresh prices are needed.';
+    showSnapshot();
+    render();
+    return;
+  }
+
+  const chosen=[...document.querySelectorAll('#markets input:checked')]
+    .map(x=>x.value);
+  if(!chosen.length){
+    $('status').textContent='Choose a prop market.';
+    return;
+  }
+
+  if(!savedEvents.length){
+    await loadGames();
+    if(!savedEvents.length)return;
+  }
+
+  const selected=$('game').value;
+  const events=savedEvents.filter(e=>
+    (selected==='all'||e.id===selected)&&
+    new Date(e.commence_time)>new Date()
+  );
+  if(!events.length){
+    $('status').textContent='No upcoming games selected. Reload the game list.';
+    return;
+  }
+
+  // Save the attempt before requesting to prevent accidental repeat spending.
+  lastAttempt=Date.now();
+  try{
+    localStorage.setItem(ATTEMPT_KEY,JSON.stringify(lastAttempt));
+  }catch{
+    $('status').textContent='Cannot save the refresh limit in this browser. Enable site storage before fetching odds.';
+    return;
+  }
+
+  scanBusy=true;
+  $('scan').disabled=true;
+  $('override').disabled=true;
+
+  const all=[
+    ...chosen,
+    ...($('alts').checked
+      ?chosen.filter(x=>x!=='player_anytime_td').map(x=>x+'_alternate')
+      :[])
+  ];
+  const jobs=[];
+  for(const event of events)
+    for(let i=0;i<all.length;i+=10)
+      jobs.push({event,chunk:all.slice(i,i+10)});
+
+  const errors=[],fresh=[];
+  let completed=0,stop=false;
+  const fetchedAt=Date.now(),books=$('book').value;
+
+  try{
+    // Stop after the first provider failure to avoid further credit spending.
+    for(const job of jobs){
+      if(stop)break;
+      try{
+        const result=await api({
+          kind:'props',
+          eventId:job.event.id,
+          markets:job.chunk.join(','),
+          bookmakers:books
+        });
+        fresh.push(...parse(result).map(row=>({...row,fetchedAt})));
+        completed++;
+      }catch(e){
+        errors.push(e.message);
+        stop=true;
+      }
+      $('status').textContent='Fetched '+completed+'/'+jobs.length+
+        ' requests · '+fresh.length.toLocaleString()+' odds rows';
+    }
+
+    if(completed){
+      // Each scan replaces the snapshot instead of mixing different dates.
+      state.bets=fresh;
+      snapshotAt=fetchedAt;
+      state.page=0;
+      invalidateAnalytics();
+      render();
+      $('status').textContent='Saved '+fresh.length.toLocaleString()+' odds rows'+
+        (errors.length?' · Partial scan: '+errors[0]:'')+
+        '. Ordinary refresh is available after 24 hours.';
+      saveSnapshot();
+    }else{
+      $('status').textContent=(errors[0]||'No odds returned')+
+        ' · Previous snapshot retained. Override permits a retry.';
+    }
+  }finally{
+    scanBusy=false;
+    $('scan').disabled=false;
+    $('override').disabled=false;
+    showSnapshot();
+  }
+}
+
+function download(name,text,type){
+  const url=URL.createObjectURL(new Blob([text],{type}));
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=name;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function readCSV(text){
+  const rows=[];
+  let row=[],cell='',quoted=false;
+  text=text.replace(/^\uFEFF/,'');
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(c==='"'){
+      if(quoted&&text[i+1]==='"'){
+        cell+='"';
+        i++;
+      }else quoted=!quoted;
+    }else if(c===','&&!quoted){
+      row.push(cell);
+      cell='';
+    }else if((c==='\n'||c==='\r')&&!quoted){
+      if(c==='\r'&&text[i+1]==='\n')i++;
+      row.push(cell);
+      if(row.some(x=>x!==''))rows.push(row);
+      row=[];
+      cell='';
+    }else cell+=c;
+  }
+  if(quoted)throw Error('Unclosed CSV quote');
+  if(cell||row.length){
+    row.push(cell);
+    rows.push(row);
+  }
+  const header=(rows.shift()||[]).map(x=>x.trim());
+  return rows.map(r=>Object.fromEntries(
+    header.map((k,i)=>[k,r[i]??''])
+  ));
+}
+
+function validateImport(rows,at){
+  if(!Array.isArray(rows)||rows.length>100000)
+    throw Error('Expected up to 100,000 odds rows');
+
+  return rows.map((r,i)=>{
+    if(!r.player||!markets[r.base]||
+       !['Over','Under','Anytime'].includes(r.side)||
+       !r.book||!r.eventId||!r.home||!r.away||
+       r.price===''||!Number.isFinite(Number(r.price))||
+       Math.abs(Number(r.price))<100||
+       r.line===''||!Number.isFinite(Number(r.line)))
+      throw Error('Invalid odds row '+(i+1));
+
+    if((r.base==='player_anytime_td')!==(r.side==='Anytime'))
+      throw Error('Market/side mismatch at row '+(i+1));
+
+    const fetchedAt=Number(r.fetchedAt||at);
+    if(!Number.isFinite(fetchedAt)||fetchedAt<=0||
+       fetchedAt>Date.now()+60000)
+      throw Error('Invalid timestamp at row '+(i+1));
+
+    return {
+      id:[r.eventId,r.book,r.base,r.player,r.side,Number(r.line),i].join('|'),
+      eventId:String(r.eventId),
+      home:String(r.home),
+      away:String(r.away),
+      game:String(r.away)+' @ '+String(r.home),
+      player:String(r.player),
+      prop:markets[r.base][0],
+      base:r.base,
+      side:r.side,
+      line:Number(r.line),
+      price:Number(r.price),
+      book:String(r.book),
+      alt:r.alt===true||r.alt==='true',
+      fetchedAt
+    };
+  });
+}
+
+$('loadGames').onclick=loadGames;
+
+$('exportJSON').onclick=()=>download(
+  'parlaylab-odds.json',
+  JSON.stringify({
+    version:1,
+    savedAt:snapshotAt,
+    bets:state.bets,
+    events:savedEvents,
+    usage:state.usage
+  },null,2),
+  'application/json'
+);
+
+const csvFields=[
+  'eventId','home','away','player','base','side',
+  'line','price','book','alt','fetchedAt'
+];
+
+$('exportCSV').onclick=()=>{
+  const quote=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+  download(
+    'parlaylab-odds.csv',
+    [
+      csvFields.join(','),
+      ...state.bets.map(b=>csvFields.map(k=>quote(b[k])).join(','))
+    ].join('\r\n'),
+    'text/csv'
+  );
+};
+
+$('importOdds').onchange=async e=>{
+  try{
+    const file=e.target.files[0];
+    if(!file)return;
+    if(file.size>15000000)throw Error('Import must be under 15 MB');
+
+    const text=await file.text();
+    const json=file.name.toLowerCase().endsWith('.json');
+    const data=json?JSON.parse(text):null;
+    const rows=validateImport(
+      json?data.bets:readCSV(text),
+      json?Number(data.savedAt):Date.now()
+    );
+    if(!rows.length)throw Error('No odds rows in file');
+
+    state.bets=rows;
+    snapshotAt=Math.min(...rows.map(r=>r.fetchedAt));
+    state.page=0;
+
+    savedEvents=[...new Map(rows.map(r=>[
+      r.eventId,
+      {id:r.eventId,home_team:r.home,away_team:r.away}
+    ])).values()];
+
+    setGames(savedEvents);
     invalidateAnalytics();
     render();
-    $('status').textContent=`Loaded ${state.bets.length.toLocaleString()} odds rows${errors.length?` · ${errors.length} failed requests: ${errors[0]}`:''}`;
+    $('status').textContent='Imported '+rows.length+
+      ' odds rows. No API credits used.';
+    saveSnapshot();
+    showSnapshot();
   }catch(e){
-    $('status').textContent=e.message;
+    $('status').textContent='Import failed: '+e.message;
   }finally{
-    btn.disabled=false;
+    e.target.value='';
   }
 };
 
-['game','alts','player','minhit','pageSize'].forEach(id=>
-  $(id).addEventListener(['player','minhit'].includes(id)?'input':'change',()=>{
-    state.page=0;render();
-  })
-);
-$('prev').onclick=()=>{state.page--;render()};
-$('next').onclick=()=>{state.page++;render()};
-$('stake').oninput=slip;
-
+restoreSnapshot();
 render();
 slip();
 loadStats();
@@ -368,4 +690,3 @@ $('injuries').onchange=async e=>{
     $('injuryStatus').textContent=e.message;
   }
 };
-
