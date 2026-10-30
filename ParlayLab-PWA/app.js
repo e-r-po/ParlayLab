@@ -93,7 +93,6 @@ function numeric(row,key){
   return row[key]==null||row[key]===''?NaN:Number(row[key]);
 }
 
-// Rebuild indexes only when historical data or injury data changes.
 function rebuildIndexes(){
   state.playerLogs=new Map();
   state.eligibleLogs=new Map();
@@ -345,15 +344,23 @@ function render(){
   const search=$('player').value.trim().toLowerCase();
   const min=Number($('minhit').value)||0;
 
+  // Match saved bookmaker titles to the sportsbook selector values.
+  const visibleBooks=new Set(
+    $('book').value.split(',').map(norm)
+  );
+
   // Market checkboxes filter saved odds without making API requests.
   const visibleMarkets=new Set(
     [...document.querySelectorAll('#markets input:checked')]
       .map(input=>input.value)
   );
 
-  let rows=calculatedRows().filter(b=>visibleMarkets.has(b.base));
+  let rows=calculatedRows().filter(b=>
+    visibleMarkets.has(b.base)
+  );
 
   rows=rows.filter(b=>
+    visibleBooks.has(norm(b.book))&&
     ($('game').value==='all'||b.eventId===$('game').value)&&
     ($('alts').checked||!b.alt)&&
     (!search||b.player.toLowerCase().includes(search))&&
@@ -467,7 +474,7 @@ $('override').onclick=()=>{
 
 let filterTimer;
 
-['game','alts','player','minhit','pageSize'].forEach(id=>
+['book','game','alts','player','minhit','pageSize'].forEach(id=>
   $(id).addEventListener(
     ['player','minhit'].includes(id)?'input':'change',
     ()=>{
@@ -495,7 +502,6 @@ $('next').onclick=()=>{
 
 $('stake').oninput=slip;
 
-// Immediately filter the table when a market checkbox changes.
 $('markets').addEventListener('change',()=>{
   state.page=0;
   render();
@@ -715,7 +721,6 @@ async function scanOdds(override){
     return;
   }
 
-  // Save the attempt before requesting to prevent repeat spending.
   lastAttempt=Date.now();
 
   try{
@@ -762,7 +767,6 @@ async function scanOdds(override){
   const books=$('book').value;
 
   try{
-    // Stop on the first provider failure to limit credit spending.
     for(const job of jobs){
       if(stop)break;
 
@@ -791,7 +795,6 @@ async function scanOdds(override){
     }
 
     if(completed){
-      // Replace the snapshot rather than mix different dates.
       state.bets=fresh;
       snapshotAt=fetchedAt;
       state.page=0;
