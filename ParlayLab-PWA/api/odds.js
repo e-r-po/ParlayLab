@@ -1,1 +1,113 @@
-const base='https://api.the-odds-api.com/v4';const allowed=new Set(['player_anytime_td','player_pass_yds','player_rush_yds','player_reception_yds','player_receptions','player_pass_tds','player_pass_attempts','player_pass_completions','player_rush_attempts']);export default async function handler(req,res){res.setHeader('Cache-Control','no-store');if(req.method!=='GET')return res.status(405).json({error:'GET only'});if(!process.env.ODDS_API_KEY)return res.status(503).json({error:'Missing ODDS_API_KEY'});const {kind='events',eventId,markets='',bookmakers='draftkings,fanduel,betmgm'}=req.query;if(!['events','props'].includes(kind))return res.status(400).json({error:'Invalid kind'});const m=String(markets).split(',').filter(x=>allowed.has(x.replace(/_alternate$/,'')));const b=String(bookmakers).split(',').filter(x=>['draftkings','fanduel','betmgm'].includes(x));if(kind==='props'&&(!/^[a-zA-Z0-9_-]{8,100}$/.test(String(eventId||''))||!m.length||m.length>10))return res.status(400).json({error:'Invalid markets/event'});if(!b.length)return res.status(400).json({error:'Invalid books'});const url=new URL(base+(kind==='events'?'/sports/americanfootball_nfl/events':`/sports/americanfootball_nfl/events/${eventId}/odds`));url.searchParams.set('apiKey',process.env.ODDS_API_KEY);if(kind==='props'){url.searchParams.set('regions','us');url.searchParams.set('markets',m.join(','));url.searchParams.set('bookmakers',b.join(','));url.searchParams.set('oddsFormat','american')}try{const r=await fetch(url,{signal:AbortSignal.timeout(12000)}),data=await r.json().catch(()=>null);if(!r.ok)return res.status(r.status===429?429:502).json({error:data?.message||data?.error||`Provider HTTP ${r.status}`});return res.json({data})}catch(e){return res.status(502).json({error:'Provider unavailable or timed out'})}}
+const base='https://api.the-odds-api.com/v4';
+
+const allowed=new Set([
+  'player_anytime_td',
+  'player_pass_yds',
+  'player_rush_yds',
+  'player_reception_yds',
+  'player_receptions',
+  'player_pass_tds',
+  'player_pass_attempts',
+  'player_pass_completions',
+  'player_rush_attempts'
+]);
+
+function credits(headers){
+  const number=name=>{
+    const value=headers.get(name);
+    return value!==null&&Number.isFinite(Number(value))
+      ?Number(value)
+      :null;
+  };
+
+  return {
+    remaining:number('x-requests-remaining'),
+    used:number('x-requests-used'),
+    last:number('x-requests-last'),
+    checkedAt:new Date().toISOString()
+  };
+}
+
+export default async function handler(req,res){
+  res.setHeader('Cache-Control','no-store');
+
+  if(req.method!=='GET')
+    return res.status(405).json({error:'GET only'});
+
+  if(!process.env.ODDS_API_KEY)
+    return res.status(503).json({error:'Missing ODDS_API_KEY'});
+
+  const {
+    kind='events',
+    eventId,
+    markets='',
+    bookmakers='draftkings,fanduel,betmgm'
+  }=req.query;
+
+  if(!['events','props'].includes(kind))
+    return res.status(400).json({error:'Invalid kind'});
+
+  const m=[...new Set(
+    String(markets)
+      .split(',')
+      .filter(x=>allowed.has(x.replace(/_alternate$/,'')))
+  )];
+
+  const b=String(bookmakers)
+    .split(',')
+    .filter(x=>['draftkings','fanduel','betmgm'].includes(x));
+
+  if(kind==='props'&&(
+    !/^[a-zA-Z0-9_-]{8,100}$/.test(String(eventId||''))||
+    !m.length||
+    m.length>10
+  )){
+    return res.status(400).json({
+      error:'Invalid markets/event'
+    });
+  }
+
+  if(!b.length)
+    return res.status(400).json({error:'Invalid books'});
+
+  const url=new URL(
+    base+(
+      kind==='events'
+        ?'/sports/americanfootball_nfl/events'
+        :`/sports/americanfootball_nfl/events/${eventId}/odds`
+    )
+  );
+
+  url.searchParams.set('apiKey',process.env.ODDS_API_KEY);
+
+  if(kind==='props'){
+    url.searchParams.set('regions','us');
+    url.searchParams.set('markets',m.join(','));
+    url.searchParams.set('bookmakers',b.join(','));
+    url.searchParams.set('oddsFormat','american');
+  }
+
+  try{
+    const r=await fetch(url,{
+      signal:AbortSignal.timeout(12000)
+    });
+
+    const usage=credits(r.headers);
+    const data=await r.json().catch(()=>null);
+
+    if(!r.ok){
+      return res.status(r.status===429?429:502).json({
+        error:data?.message||
+          data?.error||
+          `Provider HTTP ${r.status}`,
+        usage
+      });
+    }
+
+    return res.json({data,usage});
+  }catch{
+    return res.status(502).json({
+      error:'Provider unavailable or timed out'
+    });
+  }
+}
